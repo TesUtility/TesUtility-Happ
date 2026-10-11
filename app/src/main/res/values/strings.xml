@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">TesUtility</string>
+    <string name="vpn_service_desc">Безопасный туннель VLESS Reality</string>
+    <string name="vpn_connected">Подключено к VLESS Reality</string>
+    <string name="vpn_disconnected">Отключено</string>
+    <string name="vpn_connecting">Установка защищенного соединения…</string>
+    <string name="disconnect">Отключить</string>
+    <string name="channel_name">TesUtility VPN Состояние</string>
+    <string name="channel_description">Уведомления о состоянии VPN соединения</string>
+</resources>

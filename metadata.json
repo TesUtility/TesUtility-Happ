@@ -1,0 +1,6 @@
+{
+  "name": "TesUtility",
+  "description": "VLESS Reality VPN клиент TesUtility со стильным интерфейсом в стиле Happ / Incy, импортом конфигураций из QR-кода и буфера обмена, и поддержкой протоколов reality и xtls-reality.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
