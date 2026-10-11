@@ -8,7 +8,6 @@ workflows:
     scripts:
       - name: Build Android
         script: |
-          cd android
           ./gradlew assembleRelease
     artifacts:
       - android/app/build/outputs/**/*.apk
