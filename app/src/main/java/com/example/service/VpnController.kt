@@ -91,7 +91,16 @@ object VpnController {
             action = VlessVpnService.ACTION_START
             putExtra(VlessVpnService.EXTRA_CONFIG_ID, config.id)
         }
-        context.startService(serviceIntent)
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(context, serviceIntent)
+        } catch (e: Exception) {
+            try {
+                context.startService(serviceIntent)
+            } catch (e2: Exception) {
+                addLog("[Error] Failed to start VPN service: ${e2.message}")
+                setStatus(VpnStatus.DISCONNECTED)
+            }
+        }
     }
 
     fun stopVpn(context: Context) {
@@ -100,7 +109,13 @@ object VpnController {
         val serviceIntent = Intent(context, VlessVpnService::class.java).apply {
             action = VlessVpnService.ACTION_STOP
         }
-        context.startService(serviceIntent)
+        try {
+            context.startService(serviceIntent)
+        } catch (e: Exception) {
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(context, serviceIntent)
+            } catch (_: Exception) {}
+        }
     }
 
     /**

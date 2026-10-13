@@ -46,4 +46,34 @@ class ExampleRobolectricTest {
             assertTrue(json.contains("xtls-rprx-vision"))
         }
     }
+
+    @Test
+    fun `recognize embedded vless link in arbitrary chat text`() {
+        val chatMessage = """
+            Привет! Вот рабочий ключ для доступа:
+            vless://a1b2c3d4-e5f6-7890-abcd-ef1234567890@finland.reality-fast.com:443?security=reality&pbk=test_pub_key&sid=1234&sni=yahoo.com&fp=chrome#Finland-Fast
+            Подключайся, работает отлично!
+        """.trimIndent()
+
+        val found = VlessParser.findFirst(chatMessage)
+        assertNotNull(found)
+        assertEquals("finland.reality-fast.com", found?.server)
+        assertEquals("test_pub_key", found?.publicKey)
+        assertEquals("yahoo.com", found?.sni)
+    }
+
+    @Test
+    fun `extract multiple vless links from batch text`() {
+        val batchText = """
+            vless://11111111-1111-1111-1111-111111111111@de.server.com:443?security=reality&pbk=pk1&sni=google.com#DE
+            Текст посередине
+            vless://22222222-2222-2222-2222-222222222222@nl.server.com:8443?security=reality&pbk=pk2&sni=apple.com#NL
+        """.trimIndent()
+
+        val all = VlessParser.extractAll(batchText)
+        assertEquals(2, all.size)
+        assertEquals("de.server.com", all[0].server)
+        assertEquals("nl.server.com", all[1].server)
+        assertEquals(8443, all[1].port)
+    }
 }

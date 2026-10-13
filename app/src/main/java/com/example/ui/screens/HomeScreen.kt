@@ -3,7 +3,11 @@ package com.example.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -49,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import com.example.db.AppDatabase
 import com.example.model.VlessConfig
 import com.example.parser.VlessParser
+import com.example.qr.QrUtils
 import com.example.service.VpnController
 import com.example.service.VpnStatus
 import com.example.ui.components.ActiveServerCard
@@ -78,10 +83,174 @@ fun HomeScreen(
     val currentConfig by VpnController.currentConfig.collectAsState()
 
     var showQrDialogForConfig by remember { mutableStateOf<VlessConfig?>(null) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var showQrOptionDialog by remember { mutableStateOf(false) }
     var isPinging by remember { mutableStateOf(false) }
+
+    var showCameraScanner by remember { mutableStateOf(false) }
+
+    val homeQrPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            coroutineScope.launch {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    val bitmap = BitmapFactory.decodeStream(inputStream)
+                    inputStream?.close()
+                    if (bitmap != null) {
+                        val qrText = QrUtils.decodeQrBitmap(bitmap)
+                        if (!qrText.isNullOrBlank()) {
+                            var extracted = VlessParser.extractAll(qrText)
+                            if (extracted.isEmpty() && (qrText.startsWith("http://", ignoreCase = true) || qrText.startsWith("https://", ignoreCase = true))) {
+                                Toast.makeText(context, "Загрузка подписки по ссылке...", Toast.LENGTH_SHORT).show()
+                                extracted = VlessParser.fetchSubscription(qrText)
+                            }
+                            if (extracted.isNotEmpty()) {
+                                val db = AppDatabase.getInstance(context)
+                                extracted.forEach { db.vlessDao().insert(it) }
+                                val first = extracted.first()
+                                db.vlessDao().clearSelection()
+                                val id = db.vlessDao().insert(first.copy(isSelected = true))
+                                VpnController.setCurrentConfig(first.copy(id = id, isSelected = true))
+                                val msg = if (extracted.size == 1) "Импортирован из QR: ${first.name}" else "Импортировано: ${extracted.size} серверов"
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "В QR-коде не найдено ссылок VLESS", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Не удалось распознать QR-код на изображении", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Ошибка чтения изображения: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    if (showCameraScanner) {
+        com.example.ui.components.CameraQrScannerDialog(
+            onDismiss = { showCameraScanner = false },
+            onQrDetected = { rawText, configs ->
+                showCameraScanner = false
+                coroutineScope.launch {
+                    var extracted = configs
+                    if (extracted.isEmpty() && (rawText.startsWith("http://", ignoreCase = true) || rawText.startsWith("https://", ignoreCase = true))) {
+                        Toast.makeText(context, "Загрузка подписки по ссылке...", Toast.LENGTH_SHORT).show()
+                        extracted = VlessParser.fetchSubscription(rawText)
+                    }
+                    if (extracted.isNotEmpty()) {
+                        val db = AppDatabase.getInstance(context)
+                        extracted.forEach { db.vlessDao().insert(it) }
+                        val first = extracted.first()
+                        db.vlessDao().clearSelection()
+                        val id = db.vlessDao().insert(first.copy(isSelected = true))
+                        VpnController.setCurrentConfig(first.copy(id = id, isSelected = true))
+                        val msg = if (extracted.size == 1) "Импортирован из QR: ${first.name}" else "Импортировано: ${extracted.size} серверов"
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, "В QR-коде не найдено ссылок VLESS", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
 
     showQrDialogForConfig?.let { cfg ->
         QrDialog(config = cfg, onDismiss = { showQrDialogForConfig = null })
+    }
+
+    if (showQrOptionDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showQrOptionDialog = false }) {
+            androidx.compose.material3.Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = HappCardDark,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A3952)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        text = "Сканирование QR-кода",
+                        color = TextPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            showQrOptionDialog = false
+                            showCameraScanner = true
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = NeonCyan,
+                            contentColor = Color(0xFF001F29)
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Сканировать камерой", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            showQrOptionDialog = false
+                            homeQrPickerLauncher.launch("image/*")
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A3A52)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Выбрать фото QR из галереи", fontSize = 13.sp)
+                    }
+
+                    if (currentConfig != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                showQrOptionDialog = false
+                                showQrDialogForConfig = currentConfig
+                            },
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = NeonEmerald),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, NeonEmerald.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Показать QR текущего сервера", fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showImportDialog) {
+        com.example.ui.components.ImportTextDialog(
+            onDismiss = { showImportDialog = false },
+            onImportConfigs = { importedList ->
+                showImportDialog = false
+                coroutineScope.launch {
+                    val db = AppDatabase.getInstance(context)
+                    importedList.forEach { cfg ->
+                        db.vlessDao().insert(cfg)
+                    }
+                    val first = importedList.firstOrNull()
+                    if (first != null) {
+                        db.vlessDao().clearSelection()
+                        val id = db.vlessDao().insert(first.copy(isSelected = true))
+                        VpnController.setCurrentConfig(first.copy(id = id, isSelected = true))
+                    }
+                    val msg = if (importedList.size == 1) "Импортирован: ${first?.name}" else "Импортировано серверов: ${importedList.size}"
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }
+        )
     }
 
     Column(
@@ -115,7 +284,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Vless VPN",
+                        text = "TesUtility",
                         color = TextPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
@@ -190,20 +359,26 @@ fun HomeScreen(
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     val clipText = clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
                     if (clipText.isNotBlank()) {
-                        val parsed = VlessParser.parse(clipText)
-                        if (parsed != null) {
+                        val extracted = VlessParser.extractAll(clipText)
+                        if (extracted.isNotEmpty()) {
                             coroutineScope.launch {
                                 val db = AppDatabase.getInstance(context)
+                                extracted.forEach { cfg ->
+                                    db.vlessDao().insert(cfg)
+                                }
+                                val first = extracted.first()
                                 db.vlessDao().clearSelection()
-                                val id = db.vlessDao().insert(parsed.copy(isSelected = true))
-                                VpnController.setCurrentConfig(parsed.copy(id = id, isSelected = true))
-                                Toast.makeText(context, "Импортирован: ${parsed.name}", Toast.LENGTH_LONG).show()
+                                val id = db.vlessDao().insert(first.copy(isSelected = true))
+                                VpnController.setCurrentConfig(first.copy(id = id, isSelected = true))
+                                val msg = if (extracted.size == 1) "Импортирован: ${first.name}" else "Импортировано: ${extracted.size} серверов"
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
                         } else {
-                            Toast.makeText(context, "В буфере нет валидной ссылки vless://", Toast.LENGTH_SHORT).show()
+                            // If no link found directly, show the smart recognition dialog
+                            showImportDialog = true
                         }
                     } else {
-                        Toast.makeText(context, "Буфер обмена пуст", Toast.LENGTH_SHORT).show()
+                        showImportDialog = true
                     }
                 },
                 modifier = Modifier.weight(1f)

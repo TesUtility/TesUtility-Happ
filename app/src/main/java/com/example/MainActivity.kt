@@ -35,6 +35,19 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.material3.Surface
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,6 +56,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -103,7 +117,7 @@ class MainActivity : ComponentActivity() {
         val data = intent?.data
         if (data != null && data.scheme.equals("vless", ignoreCase = true)) {
             val rawUri = data.toString()
-            val parsed = VlessParser.parse(rawUri)
+            val parsed = VlessParser.findFirst(rawUri) ?: VlessParser.parse(rawUri)
             if (parsed != null) {
                 val db = AppDatabase.getInstance(applicationContext)
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -170,35 +184,42 @@ fun MainAppScreen() {
             if (selected != null) {
                 VpnController.setCurrentConfig(selected)
             } else {
-                // If no config selected yet, select first available after slight delay
-                kotlinx.coroutines.delay(300)
-                val first = db.vlessDao().getSelectedConfig()
-                if (first != null) {
-                    VpnController.setCurrentConfig(first)
+                val initial = AppDatabase.getInitialConfigs().first()
+                VpnController.setCurrentConfig(initial)
+                coroutineScope.launch {
+                    val count = db.vlessDao().getSelectedConfig()
+                    if (count == null) {
+                        db.vlessDao().insertAll(AppDatabase.getInitialConfigs())
+                    }
                 }
             }
         }
     }
 
     val onConnectAction: () -> Unit = {
-        val config = currentConfig
-        if (config == null) {
-            Toast.makeText(context, "Выберите конфигурацию VLESS", Toast.LENGTH_SHORT).show()
-            currentTab = MainTab.SERVERS
-        } else {
-            val vpnIntent = VpnService.prepare(context)
-            if (vpnIntent != null) {
+        val config = currentConfig ?: AppDatabase.getInitialConfigs().first().also {
+            VpnController.setCurrentConfig(it)
+        }
+        val vpnIntent = try {
+            VpnService.prepare(context)
+        } catch (e: Exception) {
+            null
+        }
+        if (vpnIntent != null) {
+            try {
                 vpnPrepareLauncher.launch(vpnIntent)
-            } else {
+            } catch (e: Exception) {
                 VpnController.startVpn(context, config)
             }
+        } else {
+            VpnController.startVpn(context, config)
         }
     }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = HappBgDark,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        contentWindowInsets = WindowInsets.systemBars,
         bottomBar = {
             HappBottomBar(
                 currentTab = currentTab,
@@ -218,9 +239,17 @@ fun MainAppScreen() {
                 )
                 MainTab.SERVERS -> ServersScreen(
                     onSelectAndConnect = { cfg ->
-                        val vpnIntent = VpnService.prepare(context)
+                        val vpnIntent = try {
+                            VpnService.prepare(context)
+                        } catch (e: Exception) {
+                            null
+                        }
                         if (vpnIntent != null) {
-                            vpnPrepareLauncher.launch(vpnIntent)
+                            try {
+                                vpnPrepareLauncher.launch(vpnIntent)
+                            } catch (e: Exception) {
+                                VpnController.startVpn(context, cfg)
+                            }
                         } else {
                             VpnController.startVpn(context, cfg)
                         }
@@ -237,51 +266,76 @@ fun MainAppScreen() {
 @Composable
 fun HappBottomBar(
     currentTab: MainTab,
-    onTabSelected: (MainTab) -> Unit
+    onTabSelected: (MainTab) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    NavigationBar(
-        containerColor = HappSurfaceDark,
-        tonalElevation = 8.dp,
-        modifier = Modifier
+    Box(
+        modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-            .border(
-                width = 1.dp,
-                color = HappCardBorder,
-                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-            )
-            .height(84.dp)
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
-        MainTab.values().forEach { tab ->
-            val isSelected = currentTab == tab
-            NavigationBarItem(
-                selected = isSelected,
-                onClick = { onTabSelected(tab) },
-                icon = {
-                    Icon(
-                        imageVector = tab.icon,
-                        contentDescription = tab.title,
-                        tint = if (isSelected) NeonCyan else TextMuted,
-                        modifier = Modifier.size(24.dp)
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF131A26),
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
+            border = BorderStroke(1.dp, Color(0xFF233045)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(66.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MainTab.values().forEach { tab ->
+                    val isSelected = currentTab == tab
+                    val tabColor by animateColorAsState(
+                        targetValue = if (isSelected) NeonCyan else TextMuted,
+                        animationSpec = tween(220),
+                        label = "tab_color"
                     )
-                },
-                label = {
-                    Text(
-                        text = tab.title,
-                        color = if (isSelected) NeonCyan else TextMuted,
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    indicatorColor = Color(0xFF162536),
-                    selectedIconColor = NeonCyan,
-                    unselectedIconColor = TextMuted,
-                    selectedTextColor = NeonCyan,
-                    unselectedTextColor = TextMuted
-                ),
-                modifier = Modifier.testTag("tab_${tab.name.lowercase()}")
-            )
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (isSelected) NeonCyan.copy(alpha = 0.12f) else Color.Transparent)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = ripple(bounded = true, radius = 32.dp),
+                                onClick = { onTabSelected(tab) }
+                            )
+                            .padding(vertical = 6.dp)
+                            .testTag("tab_${tab.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.title,
+                                tint = tabColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = tab.title,
+                                color = tabColor,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

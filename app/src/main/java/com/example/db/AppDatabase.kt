@@ -40,7 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        private fun getInitialConfigs(): List<VlessConfig> {
+        fun getInitialConfigs(): List<VlessConfig> {
             return listOf(
                 VlessConfig(
                     name = "🇩🇪 Frankfurt Reality [Vision]",
